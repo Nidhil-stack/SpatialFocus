@@ -2,6 +2,10 @@
 
 Cambia finestra su Windows senza mouse e senza Alt+Tab. Tieni premuto **CapsLock** con la mano sinistra: su ogni finestra aperta compare una lettera, presa dalla metà destra della tastiera nella stessa posizione in cui la finestra si trova sullo schermo. Premi quella lettera con la destra e il focus salta lì. Funziona su più monitor.
 
+![Overlay di SpatialFocus su due monitor](docs/overlay.png)
+
+*Un monitor 1920×1080 sopra un ultrawide 3440×1440: ogni finestra mostra il tasto che le corrisponde, quella attiva è in blu.*
+
 Bonus: la rotella del volume della tastiera diventa una rotella di scorrimento.
 
 ## Requisiti
