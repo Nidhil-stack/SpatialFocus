@@ -37,6 +37,7 @@ In alternativa scarica `SpatialFocus.exe` dalle [release](https://github.com/Nid
 | Esc (overlay aperto) | chiude l'overlay |
 | CapsLock + Spazio | affianca le finestre visibili mantenendo la loro disposizione |
 | CapsLock + Z | annulla l'ultimo affiancamento |
+| CapsLock + lettera verde | mette il cursore in quella casella di testo |
 | Shift+CapsLock | attiva o disattiva il maiuscolo |
 | Rotella volume | freccia su o giù (una riga) |
 | Premi la rotella | passa a scorrimento tipo mouse e ritorno |
@@ -60,6 +61,14 @@ I tasti che restano liberi vanno alla finestra che si trova nel punto dello sche
 
 Vengono ignorate le finestre ridotte a icona, quelle su altri desktop virtuali, quelle senza titolo e quelle coperte del tutto da altre finestre. Se una finestra si vede solo in parte, la sua lettera compare sul pezzo visibile.
 
+### Caselle di testo e app di chat
+
+Nelle app elencate in `[Caselle] Processi` (di default Claude e Codex) anche le caselle di testo visibili hanno un tasto, con l'etichetta verde: premendolo il cursore va direttamente in quella casella. Nell'app di Claude, per esempio, il prompt della chat principale e quello del thread aperto a destra hanno ognuno il suo tasto.
+
+Nelle app di chat (`AppChat`) anche i tasti della finestra portano nel prompt: il cursore va nella casella di testo più vicina al tasto premuto, quindi un tasto sulla colonna di destra porta al prompt di destra. Per tutte le altre app, browser compresi, SpatialFocus attiva solo la finestra e lascia il cursore dov'era.
+
+Le caselle vengono cercate con UI Automation, l'interfaccia di accessibilità di Windows, in qualche decina di millisecondi per finestra.
+
 ### Affiancare le finestre
 
 Con l'overlay aperto, **Spazio** affianca le finestre visibili di ogni monitor senza sovrapposizioni. L'area di lavoro viene tagliata dove le finestre erano già separate, quindi ognuna resta più o meno dov'era: quella a sinistra resta a sinistra, quelle una sopra l'altra restano impilate. **Z** le rimette dov'erano, comprese quelle massimizzate.
@@ -77,6 +86,9 @@ Dalla tray apri **Impostazioni**, modifica `SpatialFocus.ini` e poi scegli **Ric
 | `MinimoVisibile` | `80` | lato minimo in pixel della parte visibile perché una finestra conti come visibile |
 | `AngoliFissi` | `1` | `0` tratta i tasti d'angolo come tutti gli altri |
 | `TastiMultipli` | `1` | `0` dà un solo tasto a ogni finestra |
+| `Attive` | `1` | sezione `[Caselle]`: `0` non cerca le caselle di testo |
+| `Processi` | `claude.exe,Codex.exe,ChatGPT.exe` | sezione `[Caselle]`: app in cui le caselle di testo hanno un tasto |
+| `AppChat` | come sopra | sezione `[Caselle]`: app in cui anche i tasti della finestra portano nel prompt. Non metterci i browser |
 | `Tasto`, `Annulla` | `Space`, `SC02C` | sezione `[Tiling]`: tasti per affiancare e per annullare (SC02C è la Z) |
 | `Spaziatura` | `8` | pixel di spazio tra le finestre affiancate e dal bordo dello schermo |
 | `Riga1`… | 3 file | le file di tasti come scan code. Ad esempio aggiungi `SC007 SC008 SC009 SC00A SC00B` per la fila 6–0 |

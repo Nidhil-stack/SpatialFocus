@@ -6,7 +6,7 @@
 #SingleInstance Force
 ;@Ahk2Exe-SetName SpatialFocus
 ;@Ahk2Exe-SetDescription SpatialFocus
-;@Ahk2Exe-SetVersion 1.2.0
+;@Ahk2Exe-SetVersion 1.3.0
 ;@Ahk2Exe-SetCompanyName Nidhil-stack
 ;@Ahk2Exe-SetCopyright Copyright 2026 Nick (Nidhil-stack)
 Persistent
@@ -27,10 +27,18 @@ global Assigned := Map()   ; indice tasto -> finestra
 global Active := false
 global WheelMode := false  ; rotella del volume: false = frecce, true = rotella del mouse
 global LastLayout := []    ; posizioni prima dell'ultimo tiling, per annullarlo
+global BoxCache := Map()   ; hwnd -> caselle di testo trovate con UI Automation
+global KeyPos := Map()     ; indice tasto -> centro della sua etichetta
 
 RegisterHotkeys()
 RegisterVolumeKnob()
 BuildTray()
+if Cfg.Boxes {
+    ; Chromium accende l'albero di accessibilità solo dopo la prima richiesta e lo
+    ; spegne se nessuno lo usa: una scansione ogni tanto lo tiene pronto
+    SetTimer(WarmBoxes, 10000)
+    WarmBoxes()
+}
 
 ; ---------------------------------------------------------------- configurazione
 
@@ -47,6 +55,9 @@ LoadConfig() {
     c.MinVisible := Integer(IniRead(INI, "Generale", "MinimoVisibile", "80"))
     c.FixedCorners := IniRead(INI, "Generale", "AngoliFissi", "1") = "1"
     c.MultiKeys := IniRead(INI, "Generale", "TastiMultipli", "1") = "1"
+    c.Boxes := IniRead(INI, "Caselle", "Attive", "1") = "1"
+    c.BoxApps := ExeSet(IniRead(INI, "Caselle", "Processi", "claude.exe,Codex.exe,ChatGPT.exe"))
+    c.ChatApps := ExeSet(IniRead(INI, "Caselle", "AppChat", "claude.exe,Codex.exe,ChatGPT.exe"))
     c.TileKey := IniRead(INI, "Tiling", "Tasto", "Space")
     c.UndoKey := IniRead(INI, "Tiling", "Annulla", "SC02C")
     c.TileGap := Integer(IniRead(INI, "Tiling", "Spaziatura", "8"))
@@ -65,12 +76,18 @@ LoadConfig() {
             c.Rows.Push(row)
     }
     c.VolumeKnob := IniRead(INI, "Volume", "RotellaScorre", "1") = "1"
-    c.Exclude := Map()
-    c.Exclude.CaseSense := false
-    for p in StrSplit(IniRead(INI, "Escludi", "Processi", ""), ",")
-        if Trim(p) != ""
-            c.Exclude[Trim(p)] := true
+    c.Exclude := ExeSet(IniRead(INI, "Escludi", "Processi", ""))
     return c
+}
+
+; "a.exe, b.exe" -> Map con i nomi, senza distinguere maiuscole
+ExeSet(list) {
+    m := Map()
+    m.CaseSense := false
+    for p in StrSplit(list, ",")
+        if Trim(p) != ""
+            m[Trim(p)] := true
+    return m
 }
 
 WriteDefaultIni() {
@@ -100,6 +117,14 @@ AngoliFissi=1
 ; 1 = i tasti rimasti liberi vanno alla finestra che si trova in quel punto dello
 ; schermo, così le finestre grandi hanno più tasti
 TastiMultipli=1
+
+[Caselle]
+; 1 = nelle app elencate in Processi anche le caselle di testo hanno un tasto
+Attive=1
+Processi=claude.exe,Codex.exe,ChatGPT.exe
+; App di chat: quando ci vai con un tasto della finestra, il cursore va nella
+; casella di testo più vicina a quel tasto. Non mettere qui i browser.
+AppChat=claude.exe,Codex.exe,ChatGPT.exe
 
 [Tiling]
 ; Con l'overlay aperto (CapsLock tenuto): Tasto affianca le finestre visibili
@@ -180,30 +205,39 @@ BuildLabels() {
 ShowOverlay() {
     global Active, Assigned
     wins := CollectWindows()
-    Assigned := AssignKeys(wins)
+    boxes := Cfg.Boxes ? VisibleBoxes(wins) : []
+    Assigned := AssignKeys(wins, boxes)
+    KeyPos.Clear()
     activeHwnd := WinExist("A")
     placed := []
     ; le finestre in primo piano per prime: la loro etichetta resta al centro esatto;
-    ; i tasti in più delle finestre grandi vengono dopo, nel punto del loro tasto
+    ; poi le caselle di testo e i tasti in più delle finestre grandi
     for w in wins
         if w.HasOwnProp("ki")
-            ShowLabel(w.ki, w, w.cx, w.cy, w.hwnd = activeHwnd, placed)
+            ShowLabel(w.ki, w, w.cx, w.cy, w.hwnd = activeHwnd ? "active" : "", placed)
+    for b in boxes
+        if b.HasOwnProp("ki")
+            ShowLabel(b.ki, b, b.cx, b.cy, "box", placed)
     for w in wins
         if w.HasOwnProp("extra")
             for e in w.extra
-                ShowLabel(e.ki, w, e.x, e.y, w.hwnd = activeHwnd, placed)
+                ShowLabel(e.ki, w, e.x, e.y, w.hwnd = activeHwnd ? "active" : "", placed)
     Active := true
 }
 
-ShowLabel(ki, w, cx, cy, isActive, placed) {
+; kind: "" finestra, "active" finestra attiva, "box" casella di testo
+ShowLabel(ki, w, cx, cy, kind, placed) {
+    static bg := Map("", "1E1E2E", "active", "2563EB", "box", "0F766E")
+    static fg := Map("", "cA6ADC8", "active", "cDBEAFE", "box", "cCCFBF1")
     L := Labels[ki]
     L.title.Text := Shorten(w.title, 34)
-    L.gui.BackColor := isActive ? "2563EB" : "1E1E2E"
+    L.gui.BackColor := bg[kind]
     L.key.SetFont("cFFFFFF")
-    L.title.SetFont(isActive ? "cDBEAFE" : "cA6ADC8")
+    L.title.SetFont(fg[kind])
     x := Round(cx - L.w / 2), y := Round(cy - L.h / 2)
     y := FreeY(x, y, L.w, L.h, placed, w.mon)
     placed.Push({l: x, t: y, r: x + L.w, b: y + L.h})
+    KeyPos[ki] := {x: x + L.w / 2, y: y + L.h / 2}
     L.gui.Show("NA x" x " y" y)
 }
 
@@ -356,14 +390,13 @@ FrameRect(hwnd) {
 ; Assegna i tasti in tre passi:
 ; 1. i tasti agli angoli della griglia vanno alla finestra il cui pezzo visibile è più
 ;    vicino a quell'angolo dell'insieme dei monitor (AngoliFissi)
-; 2. ogni finestra prende anche il tasto libero più vicino, al suo centro. Le coppie
-;    (finestra, tasto) sono ordinate per distanza in "unità tasto"; a parità vince
-;    quella più in alto nello z-order
+; 2. ogni finestra prende anche il tasto libero più vicino, al suo centro; poi lo
+;    stesso per le caselle di testo (Caselle)
 ; 3. i tasti rimasti liberi vanno alla finestra visibile nel punto dello schermo che
 ;    corrisponde al tasto (TastiMultipli)
-; Assigned tiene tasto -> finestra; w.ki è il tasto con l'etichetta al centro della
+; Assigned tiene tasto -> finestra o casella; w.ki è il tasto con l'etichetta al centro della
 ; finestra, w.extra gli altri con la loro posizione.
-AssignKeys(wins) {
+AssignKeys(wins, boxes := []) {
     result := Map()
     if !wins.Length
         return result
@@ -384,25 +417,8 @@ AssignKeys(wins) {
             AddKey(best, ki)
         }
     }
-    lines := ""
-    for wi, w in wins
-        for ki, k in Keys {
-            if result.Has(ki)
-                continue
-            dx := (w.nx - k.cx) * k.cols
-            dy := (w.ny - k.cy) * k.rows
-            lines .= Format("{:.9f}|{}|{}`n", dx * dx + dy * dy + wi * 1e-7, wi, ki)
-        }
-    if lines != "" {
-        for line in StrSplit(Sort(RTrim(lines, "`n"), "N"), "`n") {
-            p := StrSplit(line, "|")
-            wi := Integer(p[2]), ki := Integer(p[3])
-            if wins[wi].HasOwnProp("ki") || result.Has(ki)
-                continue
-            result[ki] := wins[wi]
-            wins[wi].ki := ki
-        }
-    }
+    NearestKeys(wins, result)
+    NearestKeys(boxes, result)          ; le caselle di testo dopo le finestre
     ; i tasti d'angolo restano etichette agli angoli; solo se per una finestra non è
     ; rimasto nessun tasto libero, il suo primo tasto d'angolo va al centro
     for w in wins
@@ -425,6 +441,31 @@ AssignKeys(wins) {
     return result
 }
 
+; Ogni elemento di targets (finestre o caselle) prende il tasto libero più vicino. Le
+; coppie (elemento, tasto) sono ordinate per distanza in "unità tasto"; a parità vince
+; quello che viene prima, cioè più in alto nello z-order
+NearestKeys(targets, result) {
+    lines := ""
+    for ti, t in targets
+        for ki, k in Keys {
+            if result.Has(ki)
+                continue
+            dx := (t.nx - k.cx) * k.cols
+            dy := (t.ny - k.cy) * k.rows
+            lines .= Format("{:.9f}|{}|{}`n", dx * dx + dy * dy + ti * 1e-7, ti, ki)
+        }
+    if lines = ""
+        return
+    for line in StrSplit(Sort(RTrim(lines, "`n"), "N"), "`n") {
+        p := StrSplit(line, "|")
+        ti := Integer(p[2]), ki := Integer(p[3])
+        if targets[ti].HasOwnProp("ki") || result.Has(ki)
+            continue
+        result[ki] := targets[ti]
+        targets[ti].ki := ki
+    }
+}
+
 ; Tasto in più per la finestra w: l'etichetta va nel punto (x, y) tenuto dentro il
 ; pezzo visibile della finestra, o all'angolo corrispondente se manca il punto
 AddKey(w, ki, x := "", y := "") {
@@ -436,12 +477,181 @@ AddKey(w, ki, x := "", y := "") {
     w.extra.Push({ki: ki, x: x, y: y})
 }
 
-FocusWindow(w) {
+; pos è il centro dell'etichetta premuta: nelle app di chat il cursore va nella
+; casella di testo più vicina a quel punto
+FocusWindow(w, pos) {
     try {
         WinActivate(w.hwnd)
         if Cfg.MoveMouse
             DllCall("SetCursorPos", "int", Round(w.cx), "int", Round(w.cy))
     }
+    if w.HasOwnProp("boxes") && w.boxes.Length && Cfg.ChatApps.Has(w.exe)
+        FocusBox(NearestBox(w.boxes, pos))
+}
+
+; ---------------------------------------------------------------- caselle di testo
+
+; Le caselle di testo visibili delle finestre in wins, nelle app di Caselle e AppChat.
+; Ogni finestra si tiene in w.boxes le sue; restituisce solo quelle che avranno un
+; tasto (app in Processi)
+VisibleBoxes(wins) {
+    out := []
+    for wi, w in wins {
+        w.boxes := [], w.exe := ""
+        try w.exe := WinGetProcessName(w.hwnd)
+        if !Cfg.BoxApps.Has(w.exe) && !Cfg.ChatApps.Has(w.exe)
+            continue
+        for b in GetBoxes(w.hwnd) {
+            cx := (b.l + b.r) / 2, cy := (b.t + b.b) / 2
+            if !InRect(cx, cy, w.rect) || !InRect(cx, cy, w.mon) || Covered(cx, cy, wins, wi)
+                continue
+            t := {box: true, el: b.el, hwnd: w.hwnd, title: b.name != "" ? b.name : "casella di testo"
+                , mon: w.mon, cx: cx, cy: cy
+                , nx: (cx - w.vb.l) / (w.vb.r - w.vb.l), ny: (cy - w.vb.t) / (w.vb.b - w.vb.t)}
+            w.boxes.Push(t)
+            if Cfg.BoxApps.Has(w.exe)
+                out.Push(t)
+        }
+    }
+    return out
+}
+
+InRect(x, y, r) => x >= r.l && x < r.r && y >= r.t && y < r.b
+
+; Il punto è coperto da una delle finestre che stanno sopra wins[wi]?
+Covered(x, y, wins, wi) {
+    loop wi - 1
+        if InRect(x, y, wins[A_Index].rect)
+            return true
+    return false
+}
+
+NearestBox(boxes, pos) {
+    best := "", bestD := 0
+    for b in boxes {
+        d := (b.cx - pos.x) ** 2 + (b.cy - pos.y) ** 2
+        if !best || d < bestD
+            best := b, bestD := d
+    }
+    return best
+}
+
+FocusBox(t) {
+    try WinActivate(t.hwnd)
+    try WinWaitActive(t.hwnd, , 0.5)
+    try ComCall(3, t.el)                    ; IUIAutomationElement::SetFocus
+    Sleep 30
+    focused := false
+    try focused := UiaInt(t.el, 26)         ; CurrentHasKeyboardFocus
+    if focused
+        return
+    ; se UI Automation non basta, un clic al centro della casella; il mouse torna dov'era
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&mx, &my)
+    Click(Round(t.cx) " " Round(t.cy))
+    MouseMove(mx, my, 0)
+}
+
+; Caselle della finestra, rilette se la copia in memoria ha più di maxAge ms
+GetBoxes(hwnd, maxAge := 1500) {
+    if BoxCache.Has(hwnd) && A_TickCount - BoxCache[hwnd].t < maxAge
+        return BoxCache[hwnd].boxes
+    boxes := ScanBoxes(hwnd)
+    BoxCache[hwnd] := {t: A_TickCount, boxes: boxes}
+    return boxes
+}
+
+WarmBoxes() {
+    if Active
+        return
+    for hwnd in [BoxCache*]                 ; via le finestre che non ci sono più
+        if !WinExist(hwnd)
+            BoxCache.Delete(hwnd)
+    apps := Map()
+    apps.CaseSense := false
+    for exe in Cfg.BoxApps
+        apps[exe] := 1
+    for exe in Cfg.ChatApps
+        apps[exe] := 1
+    for exe in apps
+        for hwnd in WinGetList("ahk_exe " exe)
+            try
+                if WinGetMinMax(hwnd) != -1 && WinGetTitle(hwnd) != ""
+                    GetBoxes(hwnd, 0)
+}
+
+; Campi di testo modificabili della finestra secondo UI Automation: attivi, raggiungibili
+; da tastiera, sullo schermo e grandi almeno 120x16 px. Sono Edit oppure Document
+; modificabili (così UI Automation mostra i campi Win32 su più righe; la pagina intera
+; delle app Chromium è un Document in sola lettura e resta fuori)
+ScanBoxes(hwnd) {
+    static cond := ""
+    uia := UiaClient()
+    if !cond {
+        conds := []
+        for ct in [50004, 50030] {                                      ; Edit, Document
+            v := Buffer(24, 0)
+            NumPut("ushort", 3, v, 0), NumPut("int", ct, v, 8)          ; VT_I4
+            ComCall(23, uia, "int", 30003, "ptr", v, "ptr*", &c := 0)  ; CreatePropertyCondition(ControlType)
+            conds.Push(ComValue(13, c))
+        }
+        ComCall(28, uia, "ptr", conds[1], "ptr", conds[2], "ptr*", &c := 0)   ; CreateOrCondition
+        cond := ComValue(13, c)
+    }
+    out := []
+    try {
+        ComCall(6, uia, "ptr", hwnd, "ptr*", &p := 0)                  ; ElementFromHandle
+        root := ComValue(13, p)
+        ComCall(6, root, "int", 4, "ptr", cond, "ptr*", &p := 0)       ; FindAll(TreeScope_Descendants)
+        arr := ComValue(13, p)
+        ComCall(3, arr, "int*", &n := 0)
+        loop n {
+            ComCall(4, arr, "int", A_Index - 1, "ptr*", &p := 0)
+            el := ComValue(13, p)
+            rc := Buffer(16)
+            ComCall(43, el, "ptr", rc)                                  ; CurrentBoundingRectangle
+            b := {el: el, l: NumGet(rc, 0, "int"), t: NumGet(rc, 4, "int"), r: NumGet(rc, 8, "int"), b: NumGet(rc, 12, "int")}
+            ; 38 IsOffscreen, 28 IsEnabled, 27 IsKeyboardFocusable
+            if b.r - b.l < 120 || b.b - b.t < 16 || UiaInt(el, 38) || !UiaInt(el, 28) || !UiaInt(el, 27)
+                continue
+            ; 21 CurrentControlType; 30043 IsValuePatternAvailable, 30046 ValueIsReadOnly
+            if UiaInt(el, 21) = 50030 && (!UiaBool(el, 30043) || UiaBool(el, 30046))
+                continue
+            b.name := ""
+            ComCall(23, el, "ptr*", &s := 0)                            ; CurrentName
+            if s
+                b.name := StrGet(s), DllCall("OleAut32\SysFreeString", "ptr", s)
+            out.Push(b)
+        }
+    }
+    return out
+}
+
+UiaInt(el, idx) {
+    ComCall(idx, el, "int*", &v := 0)
+    return v
+}
+
+; Proprietà booleana di un elemento (GetCurrentPropertyValue, VT_BOOL)
+UiaBool(el, prop) {
+    v := Buffer(24, 0)
+    ComCall(10, el, "int", prop, "ptr", v)
+    return NumGet(v, 0, "ushort") = 11 && NumGet(v, 8, "short") != 0
+}
+
+UiaClient() {
+    static client := ""
+    if client
+        return client
+    try {
+        ; IUIAutomation2: niente focus automatico e timeout brevi se un'app non risponde
+        client := ComObject("{e22ad333-b25f-460c-83d0-0581107395c9}", "{34723aff-0c9d-49d0-9896-7ab52df8cd8a}")
+        ComCall(59, client, "int", 0)       ; put_AutoSetFocus
+        ComCall(61, client, "uint", 1000)   ; put_ConnectionTimeout
+        ComCall(63, client, "uint", 1000)   ; put_TransactionTimeout
+    } catch
+        client := ComObject("{ff48dba4-60ef-4201-aa87-54103eef594e}", "{30cbe57d-d9d0-452a-ab13-7ac5ac4825ee}")
+    return client
 }
 
 ; ---------------------------------------------------------------- tasti
@@ -475,9 +685,12 @@ OnToggle(*) {
 OnGridKey(ki, *) {
     if !Assigned.Has(ki)
         return          ; tasto senza finestra: l'overlay resta aperto
-    w := Assigned[ki]
+    t := Assigned[ki]
+    pos := KeyPos.Has(ki) ? KeyPos[ki] : {x: t.cx, y: t.cy}
     HideOverlay()
-    FocusWindow(w)
+    if t.HasOwnProp("box")
+        return FocusBox(t)
+    FocusWindow(t, pos)
 }
 
 ; Il tasto da attendere in modalità hold: "!Space" -> "Space", "LAlt & Tab" -> "Tab"
