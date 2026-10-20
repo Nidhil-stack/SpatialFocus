@@ -4,13 +4,19 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+;@Ahk2Exe-SetName SpatialFocus
+;@Ahk2Exe-SetDescription SpatialFocus
+;@Ahk2Exe-SetVersion 1.0.0
+;@Ahk2Exe-SetCompanyName Nidhil-stack
+;@Ahk2Exe-SetCopyright Copyright 2026 Nick (Nidhil-stack)
 Persistent
 
 ; DPI per-monitor v2: coordinate fisiche coerenti su monitor con scale diverse
 try DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")
 
 global APP := "SpatialFocus"
-global INI := A_ScriptDir "\" APP ".ini"
+; l'exe di winget sta in una cartella che viene sostituita a ogni aggiornamento
+global INI := A_IsCompiled ? A_AppData "\" APP "\" APP ".ini" : A_ScriptDir "\" APP ".ini"
 global STARTUP_LNK := A_Startup "\" APP ".lnk"
 global MY_PID := ProcessExist()
 global Cfg := LoadConfig()
@@ -27,6 +33,7 @@ BuildTray()
 ; ---------------------------------------------------------------- configurazione
 
 LoadConfig() {
+    DirCreate(A_IsCompiled ? A_AppData "\" APP : A_ScriptDir)
     if !FileExist(INI)
         WriteDefaultIni()
     c := {}

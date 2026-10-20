@@ -13,7 +13,17 @@ Bonus: la rotella del volume della tastiera diventa una rotella di scorrimento.
 - Windows 10 o 11
 - [AutoHotkey v2](https://www.autohotkey.com/) (`winget install AutoHotkey.AutoHotkey`)
 
-## Installazione
+## Installazione con winget
+
+```
+winget install NidhilStack.SpatialFocus
+```
+
+Disponibile dopo la revisione di Microsoft del pacchetto. Installa `SpatialFocus.exe`, che non richiede AutoHotkey, e lo avvii con il comando `spatialfocus`. Le impostazioni stanno in `%APPDATA%\SpatialFocus\SpatialFocus.ini`, così restano anche dopo gli aggiornamenti.
+
+In alternativa scarica `SpatialFocus.exe` dalle [release](https://github.com/Nidhil-stack/SpatialFocus/releases).
+
+## Installazione dallo script
 
 1. Scarica `SpatialFocus.ahk` in una cartella a tua scelta.
 2. Fai doppio clic per avviarlo. Al primo avvio crea `SpatialFocus.ini` accanto allo script.
