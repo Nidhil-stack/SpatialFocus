@@ -6,7 +6,7 @@
 #SingleInstance Force
 ;@Ahk2Exe-SetName SpatialFocus
 ;@Ahk2Exe-SetDescription SpatialFocus
-;@Ahk2Exe-SetVersion 1.1.0
+;@Ahk2Exe-SetVersion 1.2.0
 ;@Ahk2Exe-SetCompanyName Nidhil-stack
 ;@Ahk2Exe-SetCopyright Copyright 2026 Nick (Nidhil-stack)
 Persistent
@@ -18,6 +18,7 @@ global APP := "SpatialFocus"
 ; l'exe di winget sta in una cartella che viene sostituita a ogni aggiornamento
 global INI := A_IsCompiled ? A_AppData "\" APP "\" APP ".ini" : A_ScriptDir "\" APP ".ini"
 global STARTUP_LNK := A_Startup "\" APP ".lnk"
+global MIN_TILE := Map("l", 300, "t", 250)   ; lato minimo di una finestra affiancata
 global MY_PID := ProcessExist()
 global Cfg := LoadConfig()
 global Keys := BuildKeys()
@@ -44,6 +45,8 @@ LoadConfig() {
     c.Timeout := Integer(IniRead(INI, "Generale", "TimeoutToggle", "4000"))
     c.OnlyVisible := IniRead(INI, "Generale", "SoloVisibili", "1") = "1"
     c.MinVisible := Integer(IniRead(INI, "Generale", "MinimoVisibile", "80"))
+    c.FixedCorners := IniRead(INI, "Generale", "AngoliFissi", "1") = "1"
+    c.MultiKeys := IniRead(INI, "Generale", "TastiMultipli", "1") = "1"
     c.TileKey := IniRead(INI, "Tiling", "Tasto", "Space")
     c.UndoKey := IniRead(INI, "Tiling", "Annulla", "SC02C")
     c.TileGap := Integer(IniRead(INI, "Tiling", "Spaziatura", "8"))
@@ -91,6 +94,12 @@ TimeoutToggle=4000
 SoloVisibili=1
 ; Lato minimo in pixel della parte visibile perché una finestra conti come visibile
 MinimoVisibile=80
+; 1 = i quattro tasti agli angoli della griglia vanno alle finestre più vicine agli
+; angoli dell'insieme dei monitor
+AngoliFissi=1
+; 1 = i tasti rimasti liberi vanno alla finestra che si trova in quel punto dello
+; schermo, così le finestre grandi hanno più tasti
+TastiMultipli=1
 
 [Tiling]
 ; Con l'overlay aperto (CapsLock tenuto): Tasto affianca le finestre visibili
@@ -174,22 +183,28 @@ ShowOverlay() {
     Assigned := AssignKeys(wins)
     activeHwnd := WinExist("A")
     placed := []
-    ; le finestre in primo piano per prime: la loro etichetta resta al centro esatto
-    for w in wins {
-        if !w.HasOwnProp("ki")
-            continue
-        L := Labels[w.ki]
-        L.title.Text := Shorten(w.title, 34)
-        isActive := w.hwnd = activeHwnd
-        L.gui.BackColor := isActive ? "2563EB" : "1E1E2E"
-        L.key.SetFont("cFFFFFF")
-        L.title.SetFont(isActive ? "cDBEAFE" : "cA6ADC8")
-        x := Round(w.cx - L.w / 2), y := Round(w.cy - L.h / 2)
-        y := FreeY(x, y, L.w, L.h, placed, w.mon)
-        placed.Push({l: x, t: y, r: x + L.w, b: y + L.h})
-        L.gui.Show("NA x" x " y" y)
-    }
+    ; le finestre in primo piano per prime: la loro etichetta resta al centro esatto;
+    ; i tasti in più delle finestre grandi vengono dopo, nel punto del loro tasto
+    for w in wins
+        if w.HasOwnProp("ki")
+            ShowLabel(w.ki, w, w.cx, w.cy, w.hwnd = activeHwnd, placed)
+    for w in wins
+        if w.HasOwnProp("extra")
+            for e in w.extra
+                ShowLabel(e.ki, w, e.x, e.y, w.hwnd = activeHwnd, placed)
     Active := true
+}
+
+ShowLabel(ki, w, cx, cy, isActive, placed) {
+    L := Labels[ki]
+    L.title.Text := Shorten(w.title, 34)
+    L.gui.BackColor := isActive ? "2563EB" : "1E1E2E"
+    L.key.SetFont("cFFFFFF")
+    L.title.SetFont(isActive ? "cDBEAFE" : "cA6ADC8")
+    x := Round(cx - L.w / 2), y := Round(cy - L.h / 2)
+    y := FreeY(x, y, L.w, L.h, placed, w.mon)
+    placed.Push({l: x, t: y, r: x + L.w, b: y + L.h})
+    L.gui.Show("NA x" x " y" y)
 }
 
 HideOverlay(*) {
@@ -234,7 +249,7 @@ Monitors() {
     return mons
 }
 
-CollectWindows() {
+CollectWindows(limit := Keys.Length) {
     mons := Monitors()
     vb := {l: mons[1].l, t: mons[1].t, r: mons[1].r, b: mons[1].b}
     for m in mons
@@ -265,9 +280,9 @@ CollectWindows() {
         cy := (part.t + part.b) / 2
         title := ""
         try title := WinGetTitle(hwnd)
-        out.Push({hwnd: hwnd, title: title, mon: best, cx: cx, cy: cy
+        out.Push({hwnd: hwnd, title: title, mon: best, cx: cx, cy: cy, rect: r, part: part, vb: vb
             , nx: (cx - vb.l) / (vb.r - vb.l), ny: (cy - vb.t) / (vb.b - vb.t)})
-        if out.Length >= Keys.Length
+        if out.Length >= limit
             break
     }
     DllCall("DeleteObject", "ptr", covered)
@@ -338,32 +353,87 @@ FrameRect(hwnd) {
     return {l: x, t: y, r: x + w, b: y + h}
 }
 
-; Assegna a ogni finestra il tasto libero più vicino. Le coppie (finestra, tasto)
-; sono ordinate per distanza in "unità tasto"; a parità vince quella più in alto nello z-order.
+; Assegna i tasti in tre passi:
+; 1. i tasti agli angoli della griglia vanno alla finestra il cui pezzo visibile è più
+;    vicino a quell'angolo dell'insieme dei monitor (AngoliFissi)
+; 2. ogni finestra prende anche il tasto libero più vicino, al suo centro. Le coppie
+;    (finestra, tasto) sono ordinate per distanza in "unità tasto"; a parità vince
+;    quella più in alto nello z-order
+; 3. i tasti rimasti liberi vanno alla finestra visibile nel punto dello schermo che
+;    corrisponde al tasto (TastiMultipli)
+; Assigned tiene tasto -> finestra; w.ki è il tasto con l'etichetta al centro della
+; finestra, w.extra gli altri con la loro posizione.
 AssignKeys(wins) {
+    result := Map()
+    if !wins.Length
+        return result
+    vb := wins[1].vb
+    for w in wins
+        w.extra := []
+    if Cfg.FixedCorners {
+        last := Keys.Length, lastRow := Cfg.Rows[Cfg.Rows.Length].Length
+        corners := Map(1, ["l", "t"], Cfg.Rows[1].Length, ["r", "t"], last - lastRow + 1, ["l", "b"], last, ["r", "b"])
+        for ki, cn in corners {
+            best := "", bestD := 0
+            for w in wins {
+                dx := w.part.%cn[1]% - vb.%cn[1]%, dy := w.part.%cn[2]% - vb.%cn[2]%
+                if !best || dx * dx + dy * dy < bestD
+                    best := w, bestD := dx * dx + dy * dy
+            }
+            result[ki] := best
+            AddKey(best, ki)
+        }
+    }
     lines := ""
     for wi, w in wins
         for ki, k in Keys {
+            if result.Has(ki)
+                continue
             dx := (w.nx - k.cx) * k.cols
             dy := (w.ny - k.cy) * k.rows
             lines .= Format("{:.9f}|{}|{}`n", dx * dx + dy * dy + wi * 1e-7, wi, ki)
         }
-    result := Map()
-    if lines = ""
-        return result
-    usedW := Map()
-    for line in StrSplit(Sort(RTrim(lines, "`n"), "N"), "`n") {
-        p := StrSplit(line, "|")
-        wi := Integer(p[2]), ki := Integer(p[3])
-        if usedW.Has(wi) || result.Has(ki)
-            continue
-        usedW[wi] := true
-        result[ki] := wins[wi]
-        wins[wi].ki := ki
-        if usedW.Count = wins.Length
-            break
+    if lines != "" {
+        for line in StrSplit(Sort(RTrim(lines, "`n"), "N"), "`n") {
+            p := StrSplit(line, "|")
+            wi := Integer(p[2]), ki := Integer(p[3])
+            if wins[wi].HasOwnProp("ki") || result.Has(ki)
+                continue
+            result[ki] := wins[wi]
+            wins[wi].ki := ki
+        }
     }
+    ; i tasti d'angolo restano etichette agli angoli; solo se per una finestra non è
+    ; rimasto nessun tasto libero, il suo primo tasto d'angolo va al centro
+    for w in wins
+        if !w.HasOwnProp("ki") && w.extra.Length
+            w.ki := w.extra.RemoveAt(1).ki
+    if Cfg.MultiKeys
+        for ki, k in Keys {
+            if result.Has(ki)
+                continue
+            px := vb.l + k.cx * (vb.r - vb.l), py := vb.t + k.cy * (vb.b - vb.t)
+            for w in wins                       ; ordine z: la prima che contiene il punto
+                if px >= w.rect.l && px < w.rect.r && py >= w.rect.t && py < w.rect.b {
+                    if px >= w.mon.l && px < w.mon.r && py >= w.mon.t && py < w.mon.b {
+                        result[ki] := w
+                        AddKey(w, ki, px, py)
+                    }
+                    break
+                }
+        }
     return result
+}
+
+; Tasto in più per la finestra w: l'etichetta va nel punto (x, y) tenuto dentro il
+; pezzo visibile della finestra, o all'angolo corrispondente se manca il punto
+AddKey(w, ki, x := "", y := "") {
+    L := Labels[ki], p := w.part, k := Keys[ki]
+    if x = ""
+        x := k.cx < 0.5 ? p.l : p.r, y := k.cy < 0.5 ? p.t : p.b
+    x := Max(p.l + L.w / 2, Min(p.r - L.w / 2, x))
+    y := Max(p.t + L.h / 2, Min(p.b - L.h / 2, y))
+    w.extra.Push({ki: ki, x: x, y: y})
 }
 
 FocusWindow(w) {
@@ -425,23 +495,58 @@ TriggerKey() {
 ; che separa meglio le finestre, all'altezza dei loro bordi originali.
 TileVisible(*) {
     global LastLayout := []
+    Critical            ; un CapsLock premuto nel frattempo aspetta la fine
+    SetWinDelay(-1)     ; il ritardo di 100 ms dopo ogni WinMove rendeva lento il tiling
     HideOverlay()
     groups := Map()
-    for w in CollectWindows() {
+    for w in CollectWindows(1000) {
+        ; le finestre a dimensione fissa (senza bordo ridimensionabile) restano dove sono
+        style := 0x40000
+        try style := WinGetStyle(w.hwnd)
+        if !(style & 0x40000)
+            continue
         r := FrameRect(w.hwnd)
         mm := 0
         try mm := WinGetMinMax(w.hwnd)
         LastLayout.Push({hwnd: w.hwnd, rect: r, max: mm = 1})
         if !groups.Has(w.mon)
             groups[w.mon] := []
-        groups[w.mon].Push({hwnd: w.hwnd, l: r.l, t: r.t, r: r.r, b: r.b})
+        groups[w.mon].Push({hwnd: w.hwnd, l: r.l, t: r.t, r: r.r, b: r.b, min: Map("l", 0, "t", 0)})
     }
     g := Cfg.TileGap
     for mon, items in groups
-        SplitArea(items, {l: mon.wa.l + g, t: mon.wa.t + g, r: mon.wa.r - g, b: mon.wa.b - g})
+        ; una finestra con una dimensione minima più grande del suo spazio la rifiuta:
+        ; ne prendo nota e rifaccio il monitor tenendone conto
+        loop 5 {
+            SplitArea(items, {l: mon.wa.l + g, t: mon.wa.t + g, r: mon.wa.r - g, b: mon.wa.b - g})
+            again := false
+            for it in items {
+                f := FrameRect(it.hwnd), a := it.target
+                if f.r - f.l > a.r - a.l + 4
+                    it.min["l"] := f.r - f.l, again := true
+                if f.b - f.t > a.b - a.t + 4
+                    it.min["t"] := f.b - f.t, again := true
+            }
+            if !again
+                break
+        }
+    ; se lo spazio proprio non basta, almeno nessuna finestra esce dallo schermo
+    for mon, items in groups
+        for it in items
+            try {
+                f := FrameRect(it.hwnd), wa := mon.wa
+                dx := Max(0, wa.l - f.l) - Max(0, f.r - wa.r)
+                dy := Max(0, wa.t - f.t) - Max(0, f.b - wa.b)
+                if dx || dy {
+                    WinGetPos(&x, &y, , , it.hwnd)
+                    WinMove(x + dx, y + dy, , , it.hwnd)
+                }
+            }
 }
 
 UndoTile(*) {
+    Critical
+    SetWinDelay(-1)
     HideOverlay()
     for s in LastLayout {
         PlaceWindow(s.hwnd, s.rect)
@@ -451,11 +556,36 @@ UndoTile(*) {
 }
 
 SplitArea(items, area) {
-    if items.Length = 1
+    if items.Length = 1 {
+        items[1].target := area
         return PlaceWindow(items[1].hwnd, area)
+    }
+    best := BestSplit(items, area)
+    lo := best.lo, hi := best.hi
+    dim := area.%hi% - area.%lo%
+    ; ogni lato deve avere spazio per le sue finestre; se non c'è, taglio in
+    ; proporzione a quello che chiedono
+    g := Cfg.TileGap
+    minA := Need(best.a)[lo], minB := Need(best.b)[lo]
+    if minA + minB + g > dim
+        cut := Round(area.%lo% + dim * minA / (minA + minB))
+    else
+        cut := Round(Max(area.%lo% + minA + g // 2, Min(area.%hi% - minB - g // 2, best.cut)))
+    a := area.Clone(), b := area.Clone()
+    a.%hi% := cut - g // 2
+    b.%lo% := cut + g - g // 2
+    SplitArea(best.a, a)
+    SplitArea(best.b, b)
+}
+
+; Il taglio che separa meglio le finestre di items dentro area: asse, posizione e i
+; due gruppi, ordinati lungo l'asse
+BestSplit(items, area) {
     best := ""
+    longest := Max(area.r - area.l, area.b - area.t)
     for axis in ["x", "y"] {
         lo := axis = "x" ? "l" : "t", hi := axis = "x" ? "r" : "b"
+        dim := area.%hi% - area.%lo%
         sorted := SortBy(items, (it) => it.%lo% + it.%hi%)
         n := sorted.Length
         loop n - 1 {
@@ -466,21 +596,16 @@ SplitArea(items, area) {
             loop n - k
                 startB := Min(startB, sorted[k + A_Index].%lo%)
             ; > 0: tra i due gruppi c'è spazio; < 0: si sovrappongono
-            sep := (startB - endA) / (area.%hi% - area.%lo%)
-            if !best || sep > best.sep
-                best := {sep: sep, lo: lo, hi: hi, cut: (endA + startB) / 2
+            sep := (startB - endA) / dim
+            ; uno spazio vero tra i gruppi vince sempre; se si sovrappongono meglio
+            ; dividere a metà, lungo il lato lungo, che lasciare strisce sottili
+            score := sep > 0 ? 1 + sep : sep - 0.6 * Abs(2 * k - n) / n - 0.3 * (1 - dim / longest)
+            if !best || score > best.score
+                best := {score: score, lo: lo, hi: hi, k: k, n: n, cut: (endA + startB) / 2
                     , a: Slice(sorted, 1, k), b: Slice(sorted, k + 1, n)}
         }
     }
-    lo := best.lo, hi := best.hi
-    minSize := Min(200, (area.%hi% - area.%lo%) / 4)
-    cut := Round(Max(area.%lo% + minSize, Min(area.%hi% - minSize, best.cut)))
-    g := Cfg.TileGap
-    a := area.Clone(), b := area.Clone()
-    a.%hi% := cut - g // 2
-    b.%lo% := cut + g - g // 2
-    SplitArea(best.a, a)
-    SplitArea(best.b, b)
+    return best
 }
 
 ; WinMove lavora sul rettangolo con i bordi invisibili di Windows 10/11: li aggiungo
@@ -494,6 +619,20 @@ PlaceWindow(hwnd, a) {
             , (a.r - a.l) + (f.l - x) + (x + w - f.r)
             , (a.b - a.t) + (f.t - y) + (y + h - f.b), hwnd)
     }
+}
+
+; Larghezza ("l") e altezza ("t") minime per affiancare items con gli stessi tagli di
+; SplitArea: per ogni finestra MIN_TILE o la sua dimensione minima, se più grande
+Need(items) {
+    if items.Length = 1
+        return Map("l", Max(MIN_TILE["l"], items[1].min["l"]), "t", Max(MIN_TILE["t"], items[1].min["t"]))
+    bb := {l: 1e9, t: 1e9, r: -1e9, b: -1e9}
+    for it in items
+        bb.l := Min(bb.l, it.l), bb.t := Min(bb.t, it.t), bb.r := Max(bb.r, it.r), bb.b := Max(bb.b, it.b)
+    s := BestSplit(items, bb)
+    na := Need(s.a), nb := Need(s.b)
+    other := s.lo = "l" ? "t" : "l"
+    return Map(s.lo, na[s.lo] + nb[s.lo] + Cfg.TileGap, other, Max(na[other], nb[other]))
 }
 
 SortBy(arr, key) {

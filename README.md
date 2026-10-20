@@ -52,7 +52,11 @@ H  J  K  L  ;      (Ò sul layout italiano)
 N  M  ,  .  /      (- sul layout italiano)
 ```
 
-Ogni finestra prende il tasto libero più vicino al centro della sua parte visibile. Se due finestre cadono nella stessa zona, quella più in primo piano tiene il tasto più vicino. La finestra attiva ha l'etichetta blu. I tasti sono letti come scan code, cioè come posizione fisica, quindi la griglia è la stessa con qualsiasi layout.
+Ogni finestra prende il tasto libero più vicino al centro della sua parte visibile. Se due finestre cadono nella stessa zona, quella più in primo piano tiene il tasto più vicino. La finestra attiva ha le etichette blu.
+
+I quattro tasti agli angoli della griglia (Y, P, N e l'ultimo in basso a destra) vanno sempre alle finestre più vicine ai quattro angoli dell'insieme dei monitor, non del singolo schermo, e l'etichetta compare nel loro angolo. Così la finestra in alto a sinistra di tutto il setup si raggiunge sempre con Y.
+
+I tasti che restano liberi vanno alla finestra che si trova nel punto dello schermo corrispondente al tasto: una finestra grande, per esempio massimizzata sull'ultrawide, mostra più lettere e ognuna la porta in primo piano. I tasti sono letti come scan code, cioè come posizione fisica, quindi la griglia è la stessa con qualsiasi layout.
 
 Vengono ignorate le finestre ridotte a icona, quelle su altri desktop virtuali, quelle senza titolo e quelle coperte del tutto da altre finestre. Se una finestra si vede solo in parte, la sua lettera compare sul pezzo visibile.
 
@@ -71,6 +75,8 @@ Dalla tray apri **Impostazioni**, modifica `SpatialFocus.ini` e poi scegli **Ric
 | `SpostaMouse` | `0` | `1` porta anche il mouse sulla finestra scelta |
 | `SoloVisibili` | `1` | lettere solo sulle finestre che si vedono almeno in parte. `0` le mostra anche su quelle coperte |
 | `MinimoVisibile` | `80` | lato minimo in pixel della parte visibile perché una finestra conti come visibile |
+| `AngoliFissi` | `1` | `0` tratta i tasti d'angolo come tutti gli altri |
+| `TastiMultipli` | `1` | `0` dà un solo tasto a ogni finestra |
 | `Tasto`, `Annulla` | `Space`, `SC02C` | sezione `[Tiling]`: tasti per affiancare e per annullare (SC02C è la Z) |
 | `Spaziatura` | `8` | pixel di spazio tra le finestre affiancate e dal bordo dello schermo |
 | `Riga1`… | 3 file | le file di tasti come scan code. Ad esempio aggiungi `SC007 SC008 SC009 SC00A SC00B` per la fila 6–0 |
