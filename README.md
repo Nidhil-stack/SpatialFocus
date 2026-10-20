@@ -35,6 +35,8 @@ In alternativa scarica `SpatialFocus.exe` dalle [release](https://github.com/Nid
 |---|---|
 | CapsLock tenuto + lettera | va alla finestra con quella lettera |
 | Esc (overlay aperto) | chiude l'overlay |
+| CapsLock + Spazio | affianca le finestre visibili mantenendo la loro disposizione |
+| CapsLock + Z | annulla l'ultimo affiancamento |
 | Shift+CapsLock | attiva o disattiva il maiuscolo |
 | Rotella volume | freccia su o giù (una riga) |
 | Premi la rotella | passa a scorrimento tipo mouse e ritorno |
@@ -52,7 +54,11 @@ N  M  ,  .  /      (- sul layout italiano)
 
 Ogni finestra prende il tasto libero più vicino al centro della sua parte visibile. Se due finestre cadono nella stessa zona, quella più in primo piano tiene il tasto più vicino. La finestra attiva ha l'etichetta blu. I tasti sono letti come scan code, cioè come posizione fisica, quindi la griglia è la stessa con qualsiasi layout.
 
-Vengono ignorate le finestre ridotte a icona, quelle su altri desktop virtuali e quelle senza titolo.
+Vengono ignorate le finestre ridotte a icona, quelle su altri desktop virtuali, quelle senza titolo e quelle coperte del tutto da altre finestre. Se una finestra si vede solo in parte, la sua lettera compare sul pezzo visibile.
+
+### Affiancare le finestre
+
+Con l'overlay aperto, **Spazio** affianca le finestre visibili di ogni monitor senza sovrapposizioni. L'area di lavoro viene tagliata dove le finestre erano già separate, quindi ognuna resta più o meno dov'era: quella a sinistra resta a sinistra, quelle una sopra l'altra restano impilate. **Z** le rimette dov'erano, comprese quelle massimizzate.
 
 ## Impostazioni
 
@@ -63,6 +69,10 @@ Dalla tray apri **Impostazioni**, modifica `SpatialFocus.ini` e poi scegli **Ric
 | `Attivazione` | `CapsLock` | tasto o combinazione per la mano sinistra, in sintassi AutoHotkey (es. `!Space`) |
 | `Modalita` | `hold` | `hold`: tieni premuto. `toggle`: premi una volta, poi la lettera |
 | `SpostaMouse` | `0` | `1` porta anche il mouse sulla finestra scelta |
+| `SoloVisibili` | `1` | lettere solo sulle finestre che si vedono almeno in parte. `0` le mostra anche su quelle coperte |
+| `MinimoVisibile` | `80` | lato minimo in pixel della parte visibile perché una finestra conti come visibile |
+| `Tasto`, `Annulla` | `Space`, `SC02C` | sezione `[Tiling]`: tasti per affiancare e per annullare (SC02C è la Z) |
+| `Spaziatura` | `8` | pixel di spazio tra le finestre affiancate e dal bordo dello schermo |
 | `Riga1`… | 3 file | le file di tasti come scan code. Ad esempio aggiungi `SC007 SC008 SC009 SC00A SC00B` per la fila 6–0 |
 | `Scala`, `Opacita` | `1.0`, `235` | dimensione e trasparenza delle etichette |
 | `RotellaScorre` | `1` | `0` lascia la rotella del volume come in origine |

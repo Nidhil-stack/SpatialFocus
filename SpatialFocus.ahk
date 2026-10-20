@@ -6,7 +6,7 @@
 #SingleInstance Force
 ;@Ahk2Exe-SetName SpatialFocus
 ;@Ahk2Exe-SetDescription SpatialFocus
-;@Ahk2Exe-SetVersion 1.0.0
+;@Ahk2Exe-SetVersion 1.1.0
 ;@Ahk2Exe-SetCompanyName Nidhil-stack
 ;@Ahk2Exe-SetCopyright Copyright 2026 Nick (Nidhil-stack)
 Persistent
@@ -25,6 +25,7 @@ global Labels := BuildLabels()
 global Assigned := Map()   ; indice tasto -> finestra
 global Active := false
 global WheelMode := false  ; rotella del volume: false = frecce, true = rotella del mouse
+global LastLayout := []    ; posizioni prima dell'ultimo tiling, per annullarlo
 
 RegisterHotkeys()
 RegisterVolumeKnob()
@@ -41,6 +42,11 @@ LoadConfig() {
     c.Mode := IniRead(INI, "Generale", "Modalita", "hold")
     c.MoveMouse := IniRead(INI, "Generale", "SpostaMouse", "0") = "1"
     c.Timeout := Integer(IniRead(INI, "Generale", "TimeoutToggle", "4000"))
+    c.OnlyVisible := IniRead(INI, "Generale", "SoloVisibili", "1") = "1"
+    c.MinVisible := Integer(IniRead(INI, "Generale", "MinimoVisibile", "80"))
+    c.TileKey := IniRead(INI, "Tiling", "Tasto", "Space")
+    c.UndoKey := IniRead(INI, "Tiling", "Annulla", "SC02C")
+    c.TileGap := Integer(IniRead(INI, "Tiling", "Spaziatura", "8"))
     c.Scale := Float(IniRead(INI, "Aspetto", "Scala", "1.0"))
     c.Opacity := Integer(IniRead(INI, "Aspetto", "Opacita", "235"))
     c.Rows := []
@@ -80,6 +86,20 @@ Modalita=hold
 SpostaMouse=0
 ; Solo per Modalita=toggle: millisecondi prima che l'overlay sparisca da solo
 TimeoutToggle=4000
+; 1 = lettere solo sulle finestre che si vedono almeno in parte, non su quelle
+; coperte del tutto da altre finestre
+SoloVisibili=1
+; Lato minimo in pixel della parte visibile perché una finestra conti come visibile
+MinimoVisibile=80
+
+[Tiling]
+; Con l'overlay aperto (CapsLock tenuto): Tasto affianca le finestre visibili
+; mantenendo la loro disposizione, Annulla le rimette dov'erano.
+; SC02C è la Z.
+Tasto=Space
+Annulla=SC02C
+; Pixel di spazio tra le finestre e dal bordo dello schermo
+Spaziatura=8
 
 [Aspetto]
 Scala=1.0
@@ -208,7 +228,8 @@ Monitors() {
     mons := []
     loop MonitorGetCount() {
         MonitorGet(A_Index, &l, &t, &r, &b)
-        mons.Push({l: l, t: t, r: r, b: b})
+        MonitorGetWorkArea(A_Index, &wl, &wt, &wr, &wb)
+        mons.Push({l: l, t: t, r: r, b: b, wa: {l: wl, t: wt, r: wr, b: wb}})
     }
     return mons
 }
@@ -219,21 +240,29 @@ CollectWindows() {
     for m in mons
         vb.l := Min(vb.l, m.l), vb.t := Min(vb.t, m.t), vb.r := Max(vb.r, m.r), vb.b := Max(vb.b, m.b)
     out := []
+    covered := DllCall("CreateRectRgn", "int", 0, "int", 0, "int", 0, "int", 0, "ptr")
     for hwnd in WinGetList() {          ; ordine z: prima quella in primo piano
         if !IsSwitchable(hwnd)
             continue
         r := FrameRect(hwnd)
-        ; il monitor che contiene la parte più grande della finestra
-        best := "", bestArea := 0
+        ; il monitor dove si vede il pezzo più grande della finestra, non coperto da
+        ; quelle sopra: l'etichetta va al centro di quel pezzo
+        best := "", part := "", bestArea := 0
         for m in mons {
-            a := Max(0, Min(r.r, m.r) - Max(r.l, m.l)) * Max(0, Min(r.b, m.b) - Max(r.t, m.t))
-            if a > bestArea
-                best := m, bestArea := a
+            c := {l: Max(r.l, m.l), t: Max(r.t, m.t), r: Min(r.r, m.r), b: Min(r.b, m.b)}
+            if c.r <= c.l || c.b <= c.t
+                continue
+            p := Cfg.OnlyVisible ? VisiblePart(c, covered) : c
+            if p && (p.r - p.l) * (p.b - p.t) > bestArea
+                best := m, part := p, bestArea := (p.r - p.l) * (p.b - p.t)
         }
+        rgn := DllCall("CreateRectRgn", "int", r.l, "int", r.t, "int", r.r, "int", r.b, "ptr")
+        DllCall("CombineRgn", "ptr", covered, "ptr", covered, "ptr", rgn, "int", 2)   ; RGN_OR
+        DllCall("DeleteObject", "ptr", rgn)
         if !best
             continue
-        cx := (Max(r.l, best.l) + Min(r.r, best.r)) / 2
-        cy := (Max(r.t, best.t) + Min(r.b, best.b)) / 2
+        cx := (part.l + part.r) / 2
+        cy := (part.t + part.b) / 2
         title := ""
         try title := WinGetTitle(hwnd)
         out.Push({hwnd: hwnd, title: title, mon: best, cx: cx, cy: cy
@@ -241,7 +270,30 @@ CollectWindows() {
         if out.Length >= Keys.Length
             break
     }
+    DllCall("DeleteObject", "ptr", covered)
     return out
+}
+
+; Il rettangolo visibile più grande di c fuori da covered, oppure "" se ne resta
+; troppo poco per essere cliccato o riconosciuto
+VisiblePart(c, covered) {
+    rgn := DllCall("CreateRectRgn", "int", c.l, "int", c.t, "int", c.r, "int", c.b, "ptr")
+    DllCall("CombineRgn", "ptr", rgn, "ptr", rgn, "ptr", covered, "int", 4)   ; RGN_DIFF
+    size := DllCall("GetRegionData", "ptr", rgn, "uint", 0, "ptr", 0, "uint")
+    best := "", bestArea := Cfg.MinVisible * Cfg.MinVisible
+    if size {
+        buf := Buffer(size)
+        DllCall("GetRegionData", "ptr", rgn, "uint", size, "ptr", buf, "uint")
+        loop NumGet(buf, 8, "uint") {               ; RGNDATAHEADER.nCount
+            o := 32 + (A_Index - 1) * 16
+            q := {l: NumGet(buf, o, "int"), t: NumGet(buf, o + 4, "int"), r: NumGet(buf, o + 8, "int"), b: NumGet(buf, o + 12, "int")}
+            a := (q.r - q.l) * (q.b - q.t)
+            if a >= bestArea && q.r - q.l >= Cfg.MinVisible && q.b - q.t >= Cfg.MinVisible
+                best := q, bestArea := a
+        }
+    }
+    DllCall("DeleteObject", "ptr", rgn)
+    return best
 }
 
 IsSwitchable(hwnd) {
@@ -329,6 +381,8 @@ RegisterHotkeys() {
     for ki, k in Keys
         Hotkey("*" k.sc, OnGridKey.Bind(ki))
     Hotkey("*Esc", HideOverlay)
+    Hotkey("*" Cfg.TileKey, TileVisible)
+    Hotkey("*" Cfg.UndoKey, UndoTile)
     HotIf()
     Hotkey(Cfg.Trigger, Cfg.Mode = "toggle" ? OnToggle : OnHold)
     if Cfg.Trigger = "CapsLock"
@@ -362,6 +416,102 @@ TriggerKey() {
     if InStr(t, "&")
         t := Trim(SubStr(t, InStr(t, "&") + 1))
     return RegExReplace(t, "^[\^!+#<>*~$]+")
+}
+
+; ---------------------------------------------------------------- tiling
+
+; Affianca le finestre visibili di ogni monitor senza sovrapposizioni, cercando di
+; lasciarle dov'erano: l'area di lavoro viene tagliata ricorsivamente nel punto
+; che separa meglio le finestre, all'altezza dei loro bordi originali.
+TileVisible(*) {
+    global LastLayout := []
+    HideOverlay()
+    groups := Map()
+    for w in CollectWindows() {
+        r := FrameRect(w.hwnd)
+        mm := 0
+        try mm := WinGetMinMax(w.hwnd)
+        LastLayout.Push({hwnd: w.hwnd, rect: r, max: mm = 1})
+        if !groups.Has(w.mon)
+            groups[w.mon] := []
+        groups[w.mon].Push({hwnd: w.hwnd, l: r.l, t: r.t, r: r.r, b: r.b})
+    }
+    g := Cfg.TileGap
+    for mon, items in groups
+        SplitArea(items, {l: mon.wa.l + g, t: mon.wa.t + g, r: mon.wa.r - g, b: mon.wa.b - g})
+}
+
+UndoTile(*) {
+    HideOverlay()
+    for s in LastLayout {
+        PlaceWindow(s.hwnd, s.rect)
+        if s.max
+            try WinMaximize(s.hwnd)
+    }
+}
+
+SplitArea(items, area) {
+    if items.Length = 1
+        return PlaceWindow(items[1].hwnd, area)
+    best := ""
+    for axis in ["x", "y"] {
+        lo := axis = "x" ? "l" : "t", hi := axis = "x" ? "r" : "b"
+        sorted := SortBy(items, (it) => it.%lo% + it.%hi%)
+        n := sorted.Length
+        loop n - 1 {
+            k := A_Index
+            endA := -1e9, startB := 1e9
+            loop k
+                endA := Max(endA, sorted[A_Index].%hi%)
+            loop n - k
+                startB := Min(startB, sorted[k + A_Index].%lo%)
+            ; > 0: tra i due gruppi c'è spazio; < 0: si sovrappongono
+            sep := (startB - endA) / (area.%hi% - area.%lo%)
+            if !best || sep > best.sep
+                best := {sep: sep, lo: lo, hi: hi, cut: (endA + startB) / 2
+                    , a: Slice(sorted, 1, k), b: Slice(sorted, k + 1, n)}
+        }
+    }
+    lo := best.lo, hi := best.hi
+    minSize := Min(200, (area.%hi% - area.%lo%) / 4)
+    cut := Round(Max(area.%lo% + minSize, Min(area.%hi% - minSize, best.cut)))
+    g := Cfg.TileGap
+    a := area.Clone(), b := area.Clone()
+    a.%hi% := cut - g // 2
+    b.%lo% := cut + g - g // 2
+    SplitArea(best.a, a)
+    SplitArea(best.b, b)
+}
+
+; WinMove lavora sul rettangolo con i bordi invisibili di Windows 10/11: li aggiungo
+PlaceWindow(hwnd, a) {
+    try {
+        if WinGetMinMax(hwnd) != 0
+            WinRestore(hwnd)
+        WinGetPos(&x, &y, &w, &h, hwnd)
+        f := FrameRect(hwnd)
+        WinMove(a.l - (f.l - x), a.t - (f.t - y)
+            , (a.r - a.l) + (f.l - x) + (x + w - f.r)
+            , (a.b - a.t) + (f.t - y) + (y + h - f.b), hwnd)
+    }
+}
+
+SortBy(arr, key) {
+    out := []
+    for it in arr {
+        i := out.Length + 1
+        while i > 1 && key(out[i - 1]) > key(it)
+            i--
+        out.InsertAt(i, it)
+    }
+    return out
+}
+
+Slice(arr, from, to) {
+    out := []
+    loop to - from + 1
+        out.Push(arr[from + A_Index - 1])
+    return out
 }
 
 ; ---------------------------------------------------------------- rotella del volume
