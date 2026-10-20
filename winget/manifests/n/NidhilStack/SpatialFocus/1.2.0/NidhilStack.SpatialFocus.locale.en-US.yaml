@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: NidhilStack.SpatialFocus
+PackageVersion: 1.2.0
+PackageLocale: en-US
+Publisher: Nidhil-stack
+PublisherUrl: https://github.com/Nidhil-stack
+PublisherSupportUrl: https://github.com/Nidhil-stack/SpatialFocus/issues
+PackageName: SpatialFocus
+PackageUrl: https://github.com/Nidhil-stack/SpatialFocus
+License: Apache-2.0
+LicenseUrl: https://github.com/Nidhil-stack/SpatialFocus/blob/main/LICENSE
+Copyright: Copyright 2026 Nick (Nidhil-stack)
+ShortDescription: Switch windows by the spatial position of right-hand keys
+Description: |-
+  Hold CapsLock with the left hand and every open window shows a key from the right half of the keyboard,
+  placed where the window sits on screen. Press that key and focus jumps there. All monitors are treated
+  as one rectangle. Only windows that are actually visible get keys, big windows get several, and a shortcut
+  tiles the visible windows while keeping their arrangement. A keyboard volume knob can also be used to scroll.
+Moniker: spatialfocus
+Tags:
+- autohotkey
+- window-manager
+- keyboard
+- productivity
+- multi-monitor
+ReleaseNotesUrl: https://github.com/Nidhil-stack/SpatialFocus/releases/tag/v1.2.0
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
